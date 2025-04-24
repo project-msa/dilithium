@@ -101,10 +101,15 @@ class Poly:
         return Poly((self.coeffs - other.coeffs) % self.q, self.n, self.q, self.root)
 
     def __mul__(self, other: "Poly") -> "Poly":
+        if not isinstance(other,Poly):
+            return NotImplemented
         if self.root is None or other.root is None:
             raise ValueError("Primitive root not set for NTT multiplication.")
         result = poly_mul_ntt(self.coeffs, other.coeffs, self.q, self.root)
         return Poly(result, self.n, self.q, self.root)
+
+    def __rmul__(self, other: int) -> "Poly":
+        return Poly((self.coeffs * other) % self.q, self.n, self.q, self.root)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Poly): return NotImplemented
@@ -123,8 +128,9 @@ class Poly:
         return self.coeffs.tolist()
 
     def norm_inf(self) -> int:
-        centered = np.vectorize(lambda x: min(x, self.q - x))(self.coeffs % self.q)
-        return int(np.max(centered))
+        centered = ((self.coeffs + self.q//2) % self.q) - self.q//2
+        return int(np.max(np.abs(centered)))
+
 
     def copy(self) -> "Poly":
         return Poly(self.coeffs.copy(), self.n, self.q, self.root)
@@ -134,13 +140,13 @@ class Poly:
 # --------------------
 
 class PolyVec:
-    def __init__(self, polys: List[Poly]) :
+    def __init__(self, polys: List[Poly]) -> None:
         if not polys:
             raise ValueError("PolyVec must contain at least one Poly")
 
-        self.n: int = polys[0].n
-        self.q: int = polys[0].q
-        self.root: int | None = polys[0].root
+        self.n = polys[0].n
+        self.q = polys[0].q
+        self.root = polys[0].root
 
         for p in polys:
             if p.n != self.n or p.q != self.q:
@@ -156,20 +162,43 @@ class PolyVec:
     def __getitem__(self, idx: int) -> Poly:
         return self.polys[idx]
 
+    def __setitem__(self, idx: int, val: Poly) -> None:
+        if val.n != self.n or val.q != self.q or val.root != self.root:
+            raise ValueError("Mismatched Poly parameters in PolyVec assignment")
+        self.polys[idx] = val
+
     def __add__(self, other: "PolyVec") -> "PolyVec":
         return PolyVec([a + b for a, b in zip(self.polys, other.polys)])
 
     def __sub__(self, other: "PolyVec") -> "PolyVec":
         return PolyVec([a - b for a, b in zip(self.polys, other.polys)])
 
-    def __mul__(self, scalar_poly: Poly) -> "PolyVec":
-        return PolyVec([p * scalar_poly for p in self.polys])
+    def __mul__(self, scalar: Poly) -> "PolyVec":
+        return PolyVec([p * scalar for p in self.polys])
+
+    def __rmul__(self, scalar: Poly) -> "PolyVec":
+        return self * scalar
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, PolyVec):
+            return NotImplemented
+        return all(a == b for a, b in zip(self.polys, other.polys))
+
+    def norm_inf(self) -> int:
+        return max(p.norm_inf() for p in self.polys)
 
     def as_matrix(self) -> List[np.ndarray]:
         return [p.coeffs for p in self.polys]
 
+    def copy(self) -> "PolyVec":
+        return PolyVec([p.copy() for p in self.polys])
+
     def __repr__(self) -> str:
         return f"PolyVec([{', '.join(map(str, self.polys))}])"
+
+    def __str__(self) -> str:
+        return "\n" + "[" + ",\n".join(str(p) for p in self.polys) + "]"
+
 
 # --------------------
 # PolyMatrix
@@ -195,6 +224,11 @@ class PolyMatrix:
                 sum_poly += p * v
             result.append(sum_poly)
         return PolyVec(result)
+
+    def __mul__(self, other: object) -> PolyVec:
+        if not isinstance(other, PolyVec):
+            raise TypeError("PolyMatrix can only be multiplied by PolyVec")
+        return self.matvec(other)
 
     def __repr__(self) -> str:
         return f"PolyMatrix(rows={self.rows})"
